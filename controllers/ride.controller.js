@@ -17,9 +17,9 @@ const createRideSchema = Joi.object({
 
 const searchPlacesSchema = Joi.object({
   query: Joi.string().min(1).max(255).required().messages({
+    "string.empty": "Search query is required",
     "string.min": "Search query must be at least 1 character long",
-    "string.max": "Search query cannot exceed 255 characters",
-    "any.required": "Search query is required",
+    "string.max": "Search query must not exceed 255 characters",
   }),
 });
 
@@ -230,32 +230,52 @@ exports.getRideHistory = async (req, res) => {
   }
 };
 
-exports.searchPlaces = async (req, res) => {
-  const { query } = req.query;
-
-  // validation is handled by middleware
-
-  // validate mapbox token before proceeding
-  if (!process.env.MAPBOX_TOKEN) {
-    return res.status(500).json({ message: "Mapbox token not configured" });
-  }
-
+/**
+ * @desc Search for places using Nominatim (OpenStreetMap)
+ * @route GET /api/rides/places
+ * @access Private
+ */
+exports.searchPlaces = async (req, res, next) => {
   try {
+    const { error } = searchSchema.validate(req.query);
+    if (error) {
+      return res.status(400).json({
+        message: "Validation error",
+        errors: error.details.map((err) => err.message),
+      });
+    }
+
+    const { query } = req.query;
     const response = await axios.get(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-        query
-      )}.json`,
+      "https://nominatim.openstreetmap.org/search",
       {
         params: {
-          access_token: process.env.MAPBOX_TOKEN,
+          q: query,
+          format: "json",
+          limit: 10,
+        },
+        headers: {
+          "User-Agent": "RideBookingApp/1.0 (your.email@example.com)", // Nominatim requires a User-Agent
         },
       }
     );
-    res.json(response.data.features);
+
+    if (!response.data || response.data.length === 0) {
+      return res.status(404).json({ message: "No places found" });
+    }
+
+    const places = response.data.map((place) => ({
+      id: place.place_id,
+      place_name: place.display_name,
+      geometry: {
+        coordinates: [parseFloat(place.lon), parseFloat(place.lat)],
+      },
+    }));
+
+    res.json(places);
   } catch (error) {
-    res.status(500).json({
-      message: error.response?.data?.message || "Failed to search places",
-    });
+    console.error(`Error in searchPlaces: ${error.message}`);
+    next(error);
   }
 };
 
