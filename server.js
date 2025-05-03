@@ -22,7 +22,7 @@ db.getActiveRides = function () {
 // Function to update ride statuses periodically
 const updateRideStatus = async () => {
   try {
-    const rides = db.getActiveRides();
+    const rides = await db.getActiveRides();
     for (const ride of rides) {
       // Skip rides that are already completed or cancelled
       if (ride.status === "completed" || ride.status === "cancelled") {
@@ -38,10 +38,10 @@ const updateRideStatus = async () => {
       
       // Define minimum times for each status (in minutes)
       const minTimePerStatus = {
-        "Driver on the way": process.env.NODE_ENV === 'test' ? 0.1 : 2, // 2 minutes minimum as driver on the way
+        "Driver on the way": process.env.NODE_ENV === 'test' ? 0.1 : 1, // 1 minutes minimum as driver on the way
         "Driver arrived": process.env.NODE_ENV === 'test' ? 0.1 : 0.5,  // 30 seconds minimum as arrived
-        "Ride started": process.env.NODE_ENV === 'test' ? 0.1 : 1,      // 1 minute minimum for the ride
-        default: process.env.NODE_ENV === 'test' ? 0.1 : 2              // 2 minutes for other statuses
+        "Ride started": process.env.NODE_ENV === 'test' ? 0.1:0.1,      // 1 minute minimum for the ride
+        default: process.env.NODE_ENV === 'test' ? 0.1:0.1             // 3 seconds for other statuses
       };
       
       // Get the minimum time required for the current status
@@ -69,9 +69,6 @@ const updateRideStatus = async () => {
           newStatus = "Ride started";
           break;
         case "Ride started":
-          newStatus = "Ride completed";
-          break;
-        case "Ride completed":
           newStatus = "completed";
           break;
         case "in_progress":
@@ -96,12 +93,11 @@ const updateRideStatus = async () => {
       } else if (newStatus === "Ride completed" || newStatus === "completed") {
         updatedRide.eta = "Completed";
       }
-      
-      db.updateRide(updatedRide);
-
       // Emit update to all clients in the ride's room
       io.to(ride.id.toString()).emit("statusUpdate", updatedRide);
-      
+
+      await db.updateRide(updatedRide);
+    
       console.log(`Ride ${ride.id} updated to ${newStatus}`);
     }
   } catch (error) {
@@ -114,7 +110,7 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 
   // Set up periodic status updates
-  const interval = parseInt(process.env.STATUS_UPDATE_INTERVAL || 10000);
+  const interval = parseInt(process.env.STATUS_UPDATE_INTERVAL || 1000);
   setInterval(updateRideStatus, interval);
 });
 

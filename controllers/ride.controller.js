@@ -713,14 +713,14 @@ exports.updateRideStatus = async (req, res) => {
     } else if (status === "Ride completed" || status === "completed") {
       updatedRide.eta = "Completed";
     }
-    
-    // Save the updated ride
-    db.updateRide(updatedRide);
-    
+
     // If there's Socket.IO setup, emit the status update
     if (req.app.io) {
       req.app.io.to(rideId.toString()).emit("statusUpdate", updatedRide);
     }
+    
+    // Save the updated ride
+    await db.updateRide(updatedRide);    
     
     // Return the updated ride
     res.json(updatedRide);

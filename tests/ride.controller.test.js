@@ -50,7 +50,7 @@ describe("Ride Controller", () => {
     expect(res.status).toBe(400);
     // Check for the enhanced error message format
     expect(res.body.message).toContain(
-      "Invalid request data for POST /api/rides"
+      "Invalid field"
     );
 
     // Check if there's at least one error about destination length

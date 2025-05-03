@@ -26,7 +26,7 @@ module.exports = (schema, source = "body") => {
 
       switch (source) {
         case "body":
-          mainMessage = "Invalid request data";
+          mainMessage = "Invalid field";
           break;
         case "query":
           mainMessage = "Invalid query parameters";
@@ -58,7 +58,7 @@ module.exports = (schema, source = "body") => {
       });
 
       return res.status(400).json({
-        message: `${mainMessage} for ${method} ${endpoint}`,
+        message: `${mainMessage}`,
         errors: formattedErrors,
         simpleErrors: errorMessages, // Keep simple format for backward compatibility
       });

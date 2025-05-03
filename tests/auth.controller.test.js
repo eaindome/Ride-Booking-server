@@ -27,7 +27,7 @@ describe("Auth Controller", () => {
       password: "123",
     });
     expect(res.status).toBe(400);
-    expect(res.body.message).toContain("Invalid request data");
+    expect(res.body.message).toContain("Invalid field");
 
     // Check for specific field errors in the enhanced format
     const nameError = res.body.errors.find((e) => e.field === "name");
@@ -95,7 +95,7 @@ describe("Auth Controller", () => {
       password: "password123",
     });
     expect(res.status).toBe(400);
-    expect(res.body.message).toContain("Invalid request data");
+    expect(res.body.message).toContain("Invalid field");
 
     // Check for email required error
     const emailError = res.body.errors.find((e) => e.field === "email");
