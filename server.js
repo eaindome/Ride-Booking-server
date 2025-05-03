@@ -1,41 +1,127 @@
-/**
- * Server Clustering Implementation
- *
- * This file implements Node.js clustering to utilize multiple CPU cores,
- * improving application performance and resource utilization.
- * The master process spawns worker processes equal to the number of CPU cores,
- * and each worker runs an instance of the application.
- */
+const http = require("http");
+const { app, setupWebsockets } = require("./app");
+const db = require("./utils/db");
+require("dotenv").config();
 
-// Import required Node.js modules
-const cluster = require("cluster"); // For creating multiple server instances
-const os = require("os"); // For getting system CPU information
-const { app, server } = require("./app");
+// Get port from environment variable or use default
+const PORT = process.env.PORT || 5000;
 
-// Get the port from environment or use default
-const PORT = process.env.PORT || 3000;
+// Create HTTP server from Express app
+const server = http.createServer(app);
 
-// Check if current process is the master process
-if (cluster.isMaster) {
-  // Get the number of available CPU cores
-  const numCpus = os.cpus().length;
+// Set up Socket.IO with the server
+const io = setupWebsockets(server);
 
-  // Log the master process information
-  console.log(`Master ${process.pid} is running on ${numCpus} CPUs`);
+// Add getActiveRides method implementation
+db.getActiveRides = function () {
+  return this.rides.filter(
+    (ride) => ride.status !== "Finish" && ride.status !== "completed"
+  );
+};
 
-  // Fork worker processes for each CPU core
-  for (let i = 0; i < numCpus; i++) {
-    cluster.fork();
+// Function to update ride statuses periodically
+const updateRideStatus = async () => {
+  try {
+    const rides = db.getActiveRides();
+    for (const ride of rides) {
+      // Skip rides that are already completed or cancelled
+      if (ride.status === "completed" || ride.status === "cancelled") {
+        continue;
+      }
+      
+      let newStatus;
+      
+      // Check elapsed time since last update to make status transitions more realistic
+      const lastUpdateTime = new Date(ride.lastUpdated).getTime();
+      const currentTime = Date.now();
+      const elapsedMinutes = (currentTime - lastUpdateTime) / (60 * 1000);
+      
+      // Define minimum times for each status (in minutes)
+      const minTimePerStatus = {
+        "Driver on the way": process.env.NODE_ENV === 'test' ? 0.1 : 2, // 2 minutes minimum as driver on the way
+        "Driver arrived": process.env.NODE_ENV === 'test' ? 0.1 : 0.5,  // 30 seconds minimum as arrived
+        "Ride started": process.env.NODE_ENV === 'test' ? 0.1 : 1,      // 1 minute minimum for the ride
+        default: process.env.NODE_ENV === 'test' ? 0.1 : 2              // 2 minutes for other statuses
+      };
+      
+      // Get the minimum time required for the current status
+      const requiredMinTime = minTimePerStatus[ride.status] || minTimePerStatus.default;
+      
+      // Only update status if enough time has passed
+      if (elapsedMinutes < requiredMinTime) {
+        continue; // Skip this ride if not enough time has passed
+      }
+
+      switch (ride.status) {
+        case "pending":
+          newStatus = "in_progress";
+          break;
+        case "confirmed":
+          newStatus = "in_progress";
+          break;
+        case "en route":
+          newStatus = "in_progress";
+          break;
+        case "Driver on the way":
+          newStatus = "Driver arrived";
+          break;
+        case "Driver arrived":
+          newStatus = "Ride started";
+          break;
+        case "Ride started":
+          newStatus = "Ride completed";
+          break;
+        case "Ride completed":
+          newStatus = "completed";
+          break;
+        case "in_progress":
+          newStatus = "completed";
+          break;
+        default:
+          continue;
+      }
+
+      // Update ride status
+      const updatedRide = {
+        ...ride,
+        status: newStatus,
+        lastUpdated: new Date().toISOString()
+      };
+      
+      // Update ETAs based on status
+      if (newStatus === "Driver arrived") {
+        updatedRide.eta = "Driver has arrived";
+      } else if (newStatus === "Ride started") {
+        updatedRide.eta = updatedRide.ride_duration;
+      } else if (newStatus === "Ride completed" || newStatus === "completed") {
+        updatedRide.eta = "Completed";
+      }
+      
+      db.updateRide(updatedRide);
+
+      // Emit update to all clients in the ride's room
+      io.to(ride.id.toString()).emit("statusUpdate", updatedRide);
+      
+      console.log(`Ride ${ride.id} updated to ${newStatus}`);
+    }
+  } catch (error) {
+    console.error(`Error updating ride status: ${error.message}`);
   }
+};
 
-  // Handle worker crashes
-  cluster.on("exit", (worker, code, signal) => {
-    console.log(`Worker ${worker.process.pid} died. Restarting...`);
-    cluster.fork();
+// Start the server
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+
+  // Set up periodic status updates
+  const interval = parseInt(process.env.STATUS_UPDATE_INTERVAL || 10000);
+  setInterval(updateRideStatus, interval);
+});
+
+// Handle graceful shutdown
+process.on("SIGTERM", () => {
+  console.log("SIGTERM signal received: closing HTTP server");
+  server.close(() => {
+    console.log("HTTP server closed");
   });
-} else {
-  // Worker process code - start the server
-  server.listen(PORT, () => {
-    console.log(`Worker ${process.pid} listening on port ${PORT}`);
-  });
-}
+});

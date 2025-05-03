@@ -1,154 +1,261 @@
-const { isMaster, worker } = require("cluster");
+/**
+ * Simple in-memory database for development
+ */
 
-// in-memory database (only used in the master process)
+// In-memory database
 const db = {
-    users: [],
-    rides: []
+  users: [],
+  rides: [],
+  // Add default drivers distributed across continents
+  drivers: [
+    // North America
+    {
+      id: 1,
+      name: "John Smith",
+      rating: 4.8,
+      active: true,
+      location: {
+        coordinates: [-74.006, 40.7128], // New York
+        address: "Manhattan, New York",
+      },
+      vehicle: {
+        model: "Toyota Camry",
+        color: "Black",
+        plate: "NYC-1234",
+      },
+    },
+    // Europe
+    {
+      id: 2,
+      name: "Marie Dubois",
+      rating: 4.9,
+      active: true,
+      location: {
+        coordinates: [2.3522, 48.8566], // Paris
+        address: "Central Paris",
+      },
+      vehicle: {
+        model: "Renault Clio",
+        color: "Silver",
+        plate: "FR-7890",
+      },
+    },
+    // Asia
+    {
+      id: 3,
+      name: "Hiroshi Tanaka",
+      rating: 4.7,
+      active: true,
+      location: {
+        coordinates: [139.6917, 35.6895], // Tokyo
+        address: "Shibuya, Tokyo",
+      },
+      vehicle: {
+        model: "Honda Civic",
+        color: "White",
+        plate: "TK-5678",
+      },
+    },
+    // Africa
+    {
+      id: 4,
+      name: "Aisha Mensah",
+      rating: 4.6,
+      active: true,
+      location: {
+        coordinates: [-0.187, 5.6037], // Accra
+        address: "Central Accra",
+      },
+      vehicle: {
+        model: "Hyundai Sonata",
+        color: "Blue",
+        plate: "GH-3456",
+      },
+    },
+    // Australia/Oceania
+    {
+      id: 5,
+      name: "James Wilson",
+      rating: 4.9,
+      active: true,
+      location: {
+        coordinates: [151.2093, -33.8688], // Sydney
+        address: "Sydney CBD",
+      },
+      vehicle: {
+        model: "Ford Falcon",
+        color: "Red",
+        plate: "AU-2345",
+      },
+    },
+  ],
 };
 
-// message ID counter for tracking responses
-let messageId = 0;
-const pendingMessages = new Map();
-
-// Master process: Handle database operations
-if (isMaster) {
-    // listen for messages from workers
-    process.on("message", (msg) => {
-        if (msg.type === "db_operation") {
-            const { id, operation, data } = msg;
-            let result;
-
-            try {
-                switch (operation) {
-                    case "get_users":
-                        result = db.users;
-                        break;
-                    case "add_user":
-                        db.users.push(data);
-                        result = data;
-                        break;
-                    case "get_rides":
-                        result = db.rides;
-                        break;
-                    case "add_ride":
-                        db.rides.push(data);
-                        result = data;
-                        break;
-                    case "update_ride":
-                        const rideIndex = db.rides.findIndex((r) => r.id === data.id);
-                        if (rideIndex !== -1) {
-                            db.rides[rideIndex] = {
-                                ...db.rides[rideIndex],
-                                ...data
-                            };
-                            result = db.rides[rideIndex];
-                        } else {
-                            throw new Error("ride not found");
-                        }
-                        break;
-                    default:
-                        throw new Error("unknown operation");
-                }
-                // send a response back to worker
-                process.send({
-                    id, 
-                    result
-                });
-            } catch (error) {
-                process.send({
-                    id,
-                    error: error.message
-                });
-            }
+// Helper function to calculate distance between two coordinates using Haversine formula
+const calculateDistance = (coords1, coords2) => {
+    try {
+        // Validate coordinates
+        if (!Array.isArray(coords1) || coords1.length !== 2 || 
+            !Array.isArray(coords2) || coords2.length !== 2) {
+            console.error("Invalid coordinates:", {coords1, coords2});
+            // Return a default distance to prevent errors
+            return 5; // Default to 5km if coordinates are invalid
         }
-    });
+        const [lon1, lat1] = coords1;
+        const [lon2, lat2] = coords2;
 
-    module.exports = db;
-} else {
-    // Worker process: communicate with the master for database operations
-    const dbClient = {
-        get users() {
-            return new Promise((resolve, reject) => {
-                const id = messageId++;
-                pendingMessages.set(id, { resolve, reject });
-                process.send({
-                    type: "db_operation",
-                    id, 
-                    operation: "get_users",
-                });
-            });
-        },
-        addUser(user) {
-            return new Promise((resolve, reject) => {
-                const id = messageId++;
-                pendingMessages.set(id, { resolve, reject });
-                process.send({
-                    type: "db_operation",
-                    id,
-                    operation: "add_user",
-                    data: user,
-                });
-            });
-        },
-        addRide(ride) {
-            return new Promise((resolve, reject) => {
-                const id = messageId++;
-                pendingMessages.set(id, { resolve, reject });
-                process.send({
-                    type: "db_operation",
-                    id,
-                    operation: "add_ride",
-                    data: ride,
-                });
-            });
-        },
-        get rides() {
-            return new Promise((resolve, reject) => {
-                const id = messageId++;
-                pendingMessages.set(id, { resolve, reject });
-                process.send({
-                    type: "db_operation",
-                    id,
-                    operation: "get_rides",
-                });
-            });
-        },
-        updateRide(ride) {
-            return new Promise((resolve, reject) => {
-                const id = messageId++;
-                pendingMessages.set(id, { resolve, reject });
-                process.send({
-                    type: "db_operation",
-                    id,
-                    operation: "update_ride",
-                    data: ride,
-                });
-            });
-        },
+        // Check if coordinates are valid numbers
+        if (isNaN(lon1) || isNaN(lat1) || isNaN(lon2) || isNaN(lat2)) {
+            console.error("Non-numeric coordinates:", {coords1, coords2});
+            return 5; // Default to 5km if coordinates are not numeric
+        }
+
+        const R = 6371; // Radius of the earth in km
+        const dLat = deg2rad(lat2 - lat1);
+        const dLon = deg2rad(lon2 - lon1);
+
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(deg2rad(lat1)) *
+            Math.cos(deg2rad(lat2)) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c; // Distance in km
+
+        return distance;
+    } catch (error) {
+        console.error("Error calculating distance:", error);
+        return 5; // Default distance on error
+    }
+};
+
+// Helper function to convert degrees to radians
+const deg2rad = (deg) => {
+  return deg * (Math.PI / 180);
+};
+
+// Calculate ETA based on distance
+const calculateETA = (distance) => {
+  // Assuming average speed of 30 km/h in city traffic
+  const hours = distance / 30;
+  const minutes = Math.round(hours * 60);
+
+  if (minutes < 1) return "Less than a minute";
+  if (minutes === 1) return "1 minute";
+  if (minutes < 60) return `${minutes} minutes`;
+
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+
+  return `${h} hour${h > 1 ? "s" : ""} ${
+    m > 0 ? `${m} minute${m > 1 ? "s" : ""}` : ""
+  }`;
+};
+
+// Simple API for database operations
+module.exports = {
+  // Users
+  get users() {
+    return db.users;
+  },
+  addUser(user) {
+    db.users.push(user);
+    return user;
+  },
+
+  // Rides
+  get rides() {
+    return db.rides;
+  },
+  addRide(ride) {
+    // Ensure ride has all required fields
+    const newRide = {
+      ...ride,
+      date: ride.date || new Date().toISOString(),
+      cost: ride.cost || Math.floor(Math.random() * 30) + 10, // Random cost between 10-40
+      distance: ride.distance || Math.floor(Math.random() * 10) + 1, // Random distance between 1-10
+      pickup_location: ride.pickup_location || "Current Location",
+      dropoff_location: ride.dropoff_location || ride.destination,
+      status: ride.status || "Driver on the way",
     };
 
-    // listen for responses from the master
-    process.on("message", (msg) => {
-        const { id, result, error } = msg;
-        const { resolve, reject } = pendingMessages.get(id) || {};
-        if (!resolve || !reject) return;
-        pendingMessages.delete(id);
-        if (error) {
-            reject(new Error(error));
-        } else {
-            resolve(result);
-        }
-    });
+    db.rides.push(newRide);
+    return newRide;
+  },
+  updateRide(updatedRide) {
+    const index = db.rides.findIndex((ride) => ride.id === updatedRide.id);
+    if (index === -1) {
+      throw new Error("Ride not found");
+    }
+    db.rides[index] = { ...db.rides[index], ...updatedRide };
+    return db.rides[index];
+  },
+  findRideById(rideId) {
+    return db.rides.find((ride) => ride.id === parseInt(rideId));
+  },
+  getActiveRides() {
+    return db.rides.filter(
+      (ride) => ride.status !== "completed" && ride.status !== "cancelled"
+    );
+  },
 
-    module.exports = dbClient;
-}
+  // New methods for enhanced ride history
+  getCompletedRides() {
+    return db.rides.filter((ride) => ride.status === "completed");
+  },
+  getInProgressRides() {
+    return db.rides.filter(
+      (ride) =>
+        ride.status === "in_progress" ||
+        ride.status === "Driver on the way" ||
+        ride.status === "Driver arrived" ||
+        ride.status === "Ride started"
+    );
+  },
+  getCancelledRides() {
+    return db.rides.filter((ride) => ride.status === "cancelled");
+  },
 
+  // Drivers
+  get drivers() {
+    return db.drivers;
+  },
+  getActiveDrivers() {
+    return db.drivers.filter((driver) => driver.active);
+  },
 
-// This code defines a simple in-memory database object with two properties: users and rides.
-// The users property is an array that will hold user objects, while the rides property is an object that will hold ride objects indexed by their IDs.
-// This structure allows for easy storage and retrieval of user and ride data during the development phase.
-// In a real-world application, you would typically use a database management system (DBMS) like MongoDB, PostgreSQL, or MySQL to handle data persistence.
-// The in-memory database is useful for testing and development purposes, but it will not persist data across server restarts.
-// In a production environment, you would replace this in-memory database with a proper database connection and queries to store and retrieve data.
-// The db object is exported for use in other parts of the application, such as routes or controllers.
-// This allows you to access and manipulate the users and rides data from different parts of your application.
+  // Geographic utilities
+  calculateDistance,
+  calculateETA,
+
+  // Find the nearest driver to given coordinates
+  findNearestDriver(coordinates) {
+    const activeDrivers = this.getActiveDrivers();
+
+    if (activeDrivers.length === 0) {
+      return null;
+    }
+
+    let nearestDriver = null;
+    let shortestDistance = Infinity;
+
+    for (const driver of activeDrivers) {
+      const distance = calculateDistance(
+        coordinates,
+        driver.location.coordinates
+      );
+
+      if (distance < shortestDistance) {
+        shortestDistance = distance;
+        nearestDriver = {
+          ...driver,
+          distance: parseFloat(distance.toFixed(2)),
+        };
+      }
+    }
+
+    return nearestDriver;
+  },
+};

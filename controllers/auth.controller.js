@@ -2,7 +2,6 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const Joi = require("joi");
-const cluster = require("cluster");
 
 // import the in-memory database
 const db = require("../utils/db");
@@ -46,22 +45,17 @@ const loginSchema = Joi.object({
  * @returns {Object} JSON response with user data and authentication token
  */
 exports.register = async (req, res) => {
+  console.log(`Registering user...`);
   // Extract user details from request body
   const { name, email, password } = req.body;
 
   // validation is handled by middleware
 
   try {
-    // Check if user with the same email already exists
-    let users;
-    if (cluster.isMaster) {
-      // Direct access in master process
-      users = db.users;
-    } else {
-      // Access through worker API
-      users = await db.users;
-    }
+    // Get all users from the database
+    const users = db.users;
 
+    console.log(`Checking for existing user...`);
     const existingUser = users.find((user) => user.email === email);
     if (existingUser) {
       return res.status(409).json({
@@ -69,12 +63,14 @@ exports.register = async (req, res) => {
       });
     }
 
+    console.log(`Hashing password...`);
     // Hash the password for security
     const hashedPassword = bcrypt.hashSync(
       password,
       parseInt(process.env.BCRYPT_SALT_ROUNDS || 10)
     );
 
+    console.log(`Creating new user...`);
     // Create new user object
     const newUser = {
       id: Date.now(),
@@ -83,14 +79,8 @@ exports.register = async (req, res) => {
       password: hashedPassword,
     };
 
-    // Add user to database - handle both master and worker processes
-    if (cluster.isMaster) {
-      // In master process, directly push to the array
-      db.users.push(newUser);
-    } else {
-      // In worker process, use the API
-      await db.addUser(newUser);
-    }
+    // Add user to database - simplified
+    db.addUser(newUser);
 
     // Generate JWT token for authentication
     const token = jwt.sign(
@@ -137,17 +127,27 @@ exports.login = async (req, res) => {
   // validation is handled by middleware
 
   try {
-    // Find user by email
-    let users;
-    if (cluster.isMaster) {
-      // Direct access in master process
-      users = db.users;
-    } else {
-      // Access through worker API
-      users = await db.users;
+    // Get all users directly from the database
+    const users = db.users;
+
+    console.log("Total users in database:", users.length);
+    console.log(
+      "All emails in database:",
+      users.map((u) => u.email)
+    );
+
+    let user = users.find((user) => user.email === email);
+
+    // If not found, try case-insensitive match
+    if (!user) {
+      console.log("No exact match, trying case-insensitive match");
+      user = users.find(
+        (user) => user.email.toLowerCase() === email.toLowerCase()
+      );
     }
 
-    const user = users.find((user) => user.email === email);
+    console.log("User found:", user ? "Yes" : "No");
+
     if (!user) {
       // Generic error message for security (doesn't reveal if email exists)
       return res.status(401).json({ message: "Invalid email or password" });

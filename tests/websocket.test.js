@@ -2,7 +2,6 @@ const ioClient = require("socket.io-client");
 const http = require("http");
 const { app, setupWebsockets } = require("../app");
 const db = require("../utils/db");
-const cluster = require("cluster");
 
 // Set testing environment
 process.env.NODE_ENV = "test";
@@ -11,6 +10,7 @@ describe("WebSocket", () => {
   let server;
   let io;
   let socket;
+  let testPort;
 
   beforeAll((done) => {
     // Create a new HTTP server for testing
@@ -18,14 +18,14 @@ describe("WebSocket", () => {
 
     // Start the server on a random port
     server.listen(0, () => {
-      const port = server.address().port;
-      console.log(`Test server listening on port ${port}`);
+      testPort = server.address().port;
+      console.log(`Test server listening on port ${testPort}`);
 
       // Set up WebSockets on this server
       io = setupWebsockets(server);
 
       // Connect the client to the server
-      socket = ioClient(`http://localhost:${port}`, {
+      socket = ioClient(`http://localhost:${testPort}`, {
         reconnectionDelay: 0,
         forceNew: true,
         transports: ["websocket"],
@@ -58,9 +58,7 @@ describe("WebSocket", () => {
 
   beforeEach(() => {
     // Clear the database for each test
-    if (cluster.isMaster) {
-      db.rides = [];
-    }
+    db.rides = [];
 
     // Remove all previous event listeners before each test
     if (socket) {
@@ -69,27 +67,25 @@ describe("WebSocket", () => {
     }
   });
 
-  it("should receive ride status updates", (done) => {
-    // Create a test ride
+  it("should join a ride room and receive initial status", (done) => {
+    // Create a test ride with status already set
     const ride = {
       id: Date.now(),
       userId: 1,
       destination: "123 Main St",
-      status: "Driver on the way",
+      status: "Driver arrived", // Pre-set status
       lastUpdated: new Date().toISOString(),
+      eta: "Driver has arrived",
     };
 
     // Add the ride to the database
-    if (cluster.isMaster) {
-      db.rides.push(ride);
-    } else {
-      db.addRide(ride);
-    }
+    db.addRide(ride);
 
-    // Set up the listener first
+    // Set up the listener first to receive the initial status
     socket.on("statusUpdate", (updatedRide) => {
-      expect(updatedRide.status).toBe("Driver arrived");
+      // For initial join, should get the current status
       expect(updatedRide.id).toBe(ride.id);
+      expect(updatedRide.status).toBe("Driver arrived");
       done();
     });
 

@@ -3,14 +3,15 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
+const morgan = require("morgan");
 const http = require("http");
-const cluster = require("cluster");
 
 // import routes
 const authRoutes = require("./routes/auth.routes");
 const rideRoutes = require("./routes/ride.routes");
 
-// import error handling middleware
+// import middleware
+const authMiddleware = require("./middleware/auth.middleware");
 const errorHandler = require("./middleware/error.middleware");
 
 // import db
@@ -27,10 +28,11 @@ app.use(cors());
 app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev"));
 
 // routes
 app.use("/api/auth", authRoutes);
-app.use("/api/rides", rideRoutes);
+app.use("/api/rides", authMiddleware, rideRoutes);
 
 // error handling middleware
 app.use(errorHandler);
@@ -54,110 +56,48 @@ const setupWebsockets = (server) => {
 
   // websocket connection for ride status updates
   io.on("connection", (socket) => {
-    console.log(`User connected: ${socket.id}`);
+    console.log(`New client connected: ${socket.id}`);
 
     // client joining a ride
-    socket.on("joinRide", async (rideId) => {
+    socket.on("joinRide", (rideId) => {
       try {
-        // validate the rideId format
-        if (!Number.isInteger(parseInt(rideId))) {
+        // Validate rideId
+        if (!rideId || isNaN(parseInt(rideId))) {
           socket.emit("error", { message: "Invalid ride ID" });
           return;
         }
 
-        // convert rideId to number for comparison
-        const numericRideId = parseInt(rideId);
+        // Convert to number if it's a numeric string
+        const numericRideId = typeof rideId === 'string' ? parseInt(rideId) : rideId;
 
-        // validate that the ride exists
-        let rides;
-        if (cluster.isMaster) {
-          rides = db.rides;
-        } else {
-          rides = await db.rides;
-        }
-
-        const ride = rides.find((r) => r.id === numericRideId);
+        // Check if ride exists
+        const ride = db.rides.find(r => r.id === numericRideId);
         if (!ride) {
           socket.emit("error", { message: "Ride not found" });
           return;
         }
 
         socket.join(rideId.toString());
-        console.log(`User ${socket.id} joined ride ${rideId}`);
-
-        // For testing purposes: emit status update immediately
-        if (process.env.NODE_ENV === "test") {
-          if (ride.status !== "Finish") {
-            const nextStatus = {
-              "Driver on the way": "Driver arrived",
-              "Driver arrived": "Ride started",
-              "Ride started": "Ride completed",
-              "Ride completed": "Finish",
-            };
-            ride.status = nextStatus[ride.status] || "Driver on the way";
-            ride.lastUpdated = new Date().toISOString();
-
-            // Update the ride in the database
-            if (cluster.isMaster) {
-              const rideIndex = db.rides.findIndex(
-                (r) => r.id === numericRideId
-              );
-              if (rideIndex !== -1) {
-                db.rides[rideIndex] = ride;
-              }
-            } else {
-              await db.updateRide(ride);
-            }
-
-            io.to(rideId.toString()).emit("statusUpdate", ride);
-          }
-          return;
-        }
-
-        // Production behavior: simulate status updates every few seconds
-        const statusUpdateInterval = setInterval(async () => {
-          if (ride.status !== "Finish") {
-            const nextStatus = {
-              "Driver on the way": "Driver arrived",
-              "Driver arrived": "Ride started",
-              "Ride started": "Ride completed",
-              "Ride completed": "Finish",
-            };
-            ride.status = nextStatus[ride.status] || "Driver on the way";
-            ride.lastUpdated = new Date().toISOString();
-
-            // Update the ride in the database
-            if (cluster.isMaster) {
-              const rideIndex = db.rides.findIndex(
-                (r) => r.id === numericRideId
-              );
-              if (rideIndex !== -1) {
-                db.rides[rideIndex] = ride;
-              }
-            } else {
-              await db.updateRide(ride);
-            }
-
-            io.to(rideId.toString()).emit("statusUpdate", ride);
-          } else {
-            clearInterval(statusUpdateInterval);
-            console.log(`Ride ${rideId} completed`);
-          }
-        }, process.env.STATUS_UPDATE_INTERVAL || 5000);
+        console.log(`Client ${socket.id} joined ride ${rideId}`);
+        
+        // Send initial status update
+        socket.emit("statusUpdate", ride);
       } catch (error) {
+        console.error(`Error joining ride: ${error.message}`);
         socket.emit("error", { message: "Failed to join ride" });
-        console.error(`Error in joinRide: ${error.message}`);
       }
     });
 
     // client disconnection
     socket.on("disconnect", () => {
-      console.log(`User disconnected: ${socket.id}`);
+      console.log(`Client disconnected: ${socket.id}`);
     });
   });
 
   return io;
 };
+
+
 
 // Don't set up WebSockets in test-app.js, only in app.js and for tests
 if (require.main === module || process.env.NODE_ENV === "test") {
